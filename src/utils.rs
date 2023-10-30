@@ -6,6 +6,7 @@ use metal::{DeviceRef, Library, NSUInteger};
 use once_cell::sync::Lazy;
 
 use crate::gemm::{GemmParameters, Pipeline};
+use crate::Result;
 
 const LIB_DATA: &[u8] = include_bytes!("libMetalFlashAttention.metallib");
 static METAL_FLASH_ATTENTION_LIB: Mutex<Option<Library>> = Mutex::new(None);
@@ -20,13 +21,15 @@ pub fn get_cached_pipeline(p: GemmParameters) -> Option<Pipeline> {
     }
 }
 
-pub fn cache_pipeline(p: GemmParameters, pipeline: Pipeline) {
+pub fn cache_pipeline(p: GemmParameters, pipeline: Pipeline) -> Result<()> {
     if let Ok(mut cache) = PIPELINE_CACHE.lock() {
         cache.insert(p, pipeline);
+        return Ok(());
     }
+    Err("Failed to cache pipeline".to_string())
 }
 
-pub fn load_mfa_lib(device: &DeviceRef) -> Result<Library, String> {
+pub fn load_mfa_lib(device: &DeviceRef) -> Result<Library> {
     if let Some(mfa_lib) = get_mfa_lib() {
         Ok(mfa_lib)
     } else {
@@ -42,7 +45,7 @@ fn get_mfa_lib() -> Option<Library> {
     }
 }
 
-fn init_mfa_lib(device: &DeviceRef) -> Result<Library, String> {
+fn init_mfa_lib(device: &DeviceRef) -> Result<Library> {
     if let Ok(lib) = device.new_library_with_data(LIB_DATA) {
         if let Ok(mut mfa_lib) = METAL_FLASH_ATTENTION_LIB.lock() {
             *mfa_lib = Some(lib.clone());
@@ -56,6 +59,23 @@ pub fn void_ptr<T>(v: &T) -> *const c_void {
     (v as *const T).cast()
 }
 
-pub const fn ceil_divide(target: NSUInteger, granularity: u16) -> NSUInteger {
-    (target + granularity as NSUInteger - 1) / granularity as NSUInteger
+pub(crate) fn ceil_divide(target: NSUInteger, granularity: u16) -> Result<NSUInteger> {
+    crate::assert_result!(granularity > 0, "Granularity must be greater than 0");
+    Ok((target + granularity as NSUInteger - 1) / granularity as NSUInteger)
+}
+
+#[macro_export]
+macro_rules! assert_result {
+    ($cond:expr, $($arg:tt)*) => {
+        if !$cond {
+            return Err(format!($($arg)*));
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! assert_eq_result {
+    ($a:expr, $b:expr, $($arg:tt)*) => {
+        $crate::assert_result!($a == $b, $($arg)*)
+    };
 }

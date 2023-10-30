@@ -8,6 +8,7 @@ use metal::{
 };
 use num_traits::Float;
 
+use crate::{assert_eq_result, assert_result, Result};
 use crate::datatype::TensorFloatingPoint;
 use crate::tensor::Tensor;
 use crate::utils;
@@ -37,14 +38,17 @@ pub fn encode_gemm<T: TensorFloatingPoint>(
     alpha: f32,
     beta: f32,
     fused_bias: bool,
-) {
-    assert_eq!(alpha, 1.0);
-    assert_eq!(beta, 0.0);
+) -> Result<()> {
+    assert_eq_result!(alpha, 1.0, "Alpha must be 1.0");
+    assert_eq_result!(beta, 0.0, "Beta must be 0.0");
 
     let a_shape = a.shape();
     let b_shape = b.shape();
     let c_shape = c.shape();
-    assert!(a.shape().len() >= 2 && b.shape().len() >= 2 && c.shape().len() >= 2);
+    assert_result!(
+        a.shape().len() >= 2 && b.shape().len() >= 2 && c.shape().len() >= 2,
+        "All shapes must have at least 2 dimensions"
+    );
 
     let la = a_shape.len() - 1;
     let lb = b_shape.len() - 1;
@@ -61,27 +65,33 @@ pub fn encode_gemm<T: TensorFloatingPoint>(
         (b_shape[lb], b_shape[lb - 1])
     };
 
-    assert_eq!(k, b_k);
-    assert!(m > 0, "Invalid matrix");
-    assert!(n > 0, "Invalid matrix");
-    assert!(k > 0, "Invalid matrix");
-    assert_eq!(k, n, "A column size must equal right row size");
-    assert!(
+    assert_eq_result!(
+        k,
+        b_k,
+        "K must be equal to B_K, but got K={} and B_K={}",
+        k,
+        b_k
+    );
+    assert_result!(m > 0, "M must be greater than 0");
+    assert_result!(n > 0, "N must be greater than 0");
+    assert_result!(k > 0, "K must be greater than 0");
+    assert_eq_result!(k, n, "K must be equal to N, but got K={} and N={}", k, n);
+    assert_result!(
         m * k >= m * n,
         "A matrix must be larger or equal to result rows * interior columns"
     );
-    assert!(
+    assert_result!(
         k * n >= m * n,
         "B matrix must be larger or equal to result columns * interior columns"
     );
 
     let mut batched = false;
     if a_shape.len() > 2 || c_shape.len() > 2 {
-        assert!(
+        assert_result!(
             c_shape.len() > 2,
             "Misshapen matrices. If A #dims > 2 then C #dims must be so as well"
         );
-        assert!(
+        assert_result!(
             a_shape.len() > 2,
             "Misshapen matrices. If C #dims > 2 then A #dims must be so as well"
         );
@@ -89,15 +99,25 @@ pub fn encode_gemm<T: TensorFloatingPoint>(
     }
 
     if !fused_bias {
-        assert!(d.is_none());
+        assert_result!(d.is_none(), "Bias tensor provided without fused_bias flag");
     } else {
-        let d_t = d.as_ref().expect("Bias tensor must be provided");
+        let d_t = d
+            .as_ref()
+            .ok_or("Fused bias provided without bias tensor")?;
         let d_shape = d_t.shape();
-        assert!(!d_shape.is_empty());
+        assert_result!(!d_shape.is_empty(), "Bias tensor must not be empty");
         if transpose_d {
-            assert_eq!(d_shape[d_shape.len() - 1], m);
+            assert_eq_result!(
+                d_shape[d_shape.len() - 1],
+                m,
+                "Bias tensor must have M rows"
+            );
         } else {
-            assert_eq!(d_shape[d_shape.len() - 1], n);
+            assert_eq_result!(
+                d_shape[d_shape.len() - 1],
+                n,
+                "Bias tensor must have N columns"
+            );
         }
         // let batch_dimensions_d = d_shape.split_last().map(|(_, rest)| rest.to_vec()).unwrap();
     }
@@ -117,8 +137,10 @@ pub fn encode_gemm<T: TensorFloatingPoint>(
         fn_name: T::FN_NAME,
     };
 
-    let pipeline = create_pipeline::<T>(device, parameters);
+    let pipeline = create_pipeline::<T>(device, parameters).expect("Failed to create pipeline");
     encode(encoder, a, b, c, d, pipeline);
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -196,14 +218,15 @@ pub fn encode<T: TensorFloatingPoint>(
     encoder.set_compute_pipeline_state(&pipeline.pipelines[0]);
     encoder.set_threadgroup_memory_length(0, pipeline.thread_group_memory_lengths[0] as NSUInteger);
 
-    encoder.set_buffer(0, Some(a.buffer()), 0);
-    encoder.set_buffer(1, Some(b.buffer()), 0);
-    encoder.set_buffer(2, Some(c.buffer()), 0);
+    encoder.set_buffers(
+        0,
+        &[Some(&a.buffer()), Some(&b.buffer()), Some(&c.buffer())],
+        &[0; 3],
+    );
     if let Some(d) = d {
-        encoder.set_buffer(3, Some(d.buffer()), 0)
+        encoder.set_buffer(3, Some(d.buffer()), 0);
     }
 
-    println!("pipeline.flags: {:?}", pipeline.flags & 0x1 > 0);
     let mut grid_z = 1;
     if pipeline.flags & 0x1 > 0 {
         panic!("Batched gemm not implemented yet");
@@ -270,6 +293,13 @@ pub fn encode<T: TensorFloatingPoint>(
         grid_z = 1;
     }
 
+    // let pipeline_state = &pipeline.pipelines[0];
+    // let n = a.shape()[1] as NSUInteger;
+    // let w = pipeline_state.thread_execution_width();
+    // let h = pipeline_state.max_total_threads_per_threadgroup() / w;
+    // let thread_groups_count = MTLSize::new(n, n, 1);
+    // let threads_per_threadgroup = MTLSize::new(w, h, 1);
+
     let mut thread_groups_count = pipeline.grid_sizes[0];
     thread_groups_count.depth = grid_z;
     let threads_per_threadgroup = pipeline.group_sizes[0];
@@ -279,6 +309,7 @@ pub fn encode<T: TensorFloatingPoint>(
 
     encoder.dispatch_thread_groups(thread_groups_count, threads_per_threadgroup);
 
+    println!("encoder: {:?}", encoder);
     println!("c: {:?}", c.contents());
 }
 
@@ -318,19 +349,24 @@ impl Pipeline {
     }
 }
 
-fn create_pipeline<T: TensorFloatingPoint>(device: &DeviceRef, p: GemmParameters) -> Pipeline {
+fn create_pipeline<T: TensorFloatingPoint>(
+    device: &DeviceRef,
+    p: GemmParameters,
+) -> Result<Pipeline> {
     if let Some(pipeline) = utils::get_cached_pipeline(p) {
-        return pipeline;
+        return Ok(pipeline);
     }
 
-    assert_eq!(p.alpha, 1.0);
-    assert_eq!(p.beta, 0.0);
-    assert!(!p.fused_activation);
+    assert_eq_result!(p.alpha, 1.0, "Alpha must be 1.0");
+    assert_eq_result!(p.beta, 0.0, "Beta must be 0.0");
+    assert_result!(!p.fused_activation, "Fused activation must be false");
 
     let constant_values = function_constant_values(&p);
+    println!("constant_values: {:?}", constant_values);
     let lib = utils::load_mfa_lib(device).unwrap();
 
     let function = lib.get_function(T::FN_NAME, Some(constant_values)).unwrap();
+    println!("function: {:?}", function);
 
     let mut block_elements = A_BLOCK_LENGTH + B_BLOCK_LENGTH;
     if (p.m % 8 != 0) && (p.n % 8 != 0) {
@@ -347,8 +383,8 @@ fn create_pipeline<T: TensorFloatingPoint>(device: &DeviceRef, p: GemmParameters
     let block_bytes = block_elements * mem::size_of::<T>() as u16;
 
     let grid_size = MTLSize::new(
-        utils::ceil_divide(p.n, N_GROUP),
-        utils::ceil_divide(p.m, M_GROUP),
+        utils::ceil_divide(p.n, N_GROUP)?,
+        utils::ceil_divide(p.m, M_GROUP)?,
         1,
     );
 
@@ -373,8 +409,8 @@ fn create_pipeline<T: TensorFloatingPoint>(device: &DeviceRef, p: GemmParameters
         vec![grid_size],
         vec![group_size],
     );
-    utils::cache_pipeline(p, pipeline.clone());
-    pipeline
+    utils::cache_pipeline(p, pipeline.clone())?;
+    Ok(pipeline)
 }
 
 pub fn function_constant_values(p: &GemmParameters) -> FunctionConstantValues {
@@ -413,11 +449,11 @@ pub fn function_constant_values(p: &GemmParameters) -> FunctionConstantValues {
     constants.set_constant_value_at_index(utils::void_ptr(&N_SPLITS), MTLDataType::UShort, 211);
 
     // Metal API validation. Setting garbage values for unused constants. May not be necessary.
-    let garbage = false;
-    constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 102);
-    constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 103);
-    constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 113);
-    constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 50000);
+    // let garbage = false;
+    // constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 102);
+    // constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 103);
+    // constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 113);
+    // constants.set_constant_value_at_index(utils::void_ptr(&garbage), MTLDataType::Bool, 50000);
 
     constants
 }
