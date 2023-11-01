@@ -103,9 +103,14 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
+    pub fn copy(tensor: &Tensor<T>) -> Self {
+        tensor.clone()
+    }
+
     pub fn buffer(&self) -> &BufferRef {
         &self.buffer
     }
+
     pub fn shape(&self) -> &Vec<usize> {
         &self.shape
     }

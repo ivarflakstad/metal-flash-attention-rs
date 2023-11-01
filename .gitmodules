@@ -1,3 +1,0 @@
-[submodule "sys/metal-flash-attention"]
-	path = sys/metal-flash-attention
-	url = https://github.com/philipturner/metal-flash-attention.git
