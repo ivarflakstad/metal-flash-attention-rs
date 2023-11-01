@@ -5,25 +5,25 @@ use std::sync::Mutex;
 use metal::{DeviceRef, Library, NSUInteger};
 use once_cell::sync::Lazy;
 
-use crate::gemm::{GemmParameters, Pipeline};
+use crate::pipeline::{Parameters, Pipeline};
 use crate::Result;
 
 const LIB_DATA: &[u8] = include_bytes!("libMetalFlashAttention.metallib");
 static METAL_FLASH_ATTENTION_LIB: Mutex<Option<Library>> = Mutex::new(None);
-static PIPELINE_CACHE: Lazy<Mutex<HashMap<GemmParameters, Pipeline>>> =
+static PIPELINE_CACHE: Lazy<Mutex<HashMap<Parameters, Pipeline>>> =
     Lazy::new(|| Mutex::new(HashMap::default()));
 
-pub fn get_cached_pipeline(p: GemmParameters) -> Option<Pipeline> {
+pub fn get_cached_pipeline<T: Into<Parameters>>(p: T) -> Option<Pipeline> {
     if let Ok(cache) = PIPELINE_CACHE.lock() {
-        cache.get(&p).cloned()
+        cache.get(&p.into()).cloned()
     } else {
         None
     }
 }
 
-pub fn cache_pipeline(p: GemmParameters, pipeline: Pipeline) -> Result<()> {
+pub fn cache_pipeline<T: Into<Parameters>>(p: T, pipeline: Pipeline) -> Result<()> {
     if let Ok(mut cache) = PIPELINE_CACHE.lock() {
-        cache.insert(p, pipeline);
+        cache.insert(p.into(), pipeline);
         return Ok(());
     }
     Err("Failed to cache pipeline".to_string())
@@ -46,13 +46,15 @@ fn get_mfa_lib() -> Option<Library> {
 }
 
 fn init_mfa_lib(device: &DeviceRef) -> Result<Library> {
-    if let Ok(lib) = device.new_library_with_data(LIB_DATA) {
-        if let Ok(mut mfa_lib) = METAL_FLASH_ATTENTION_LIB.lock() {
-            *mfa_lib = Some(lib.clone());
+    match device.new_library_with_data(LIB_DATA) {
+        Ok(lib) => {
+            if let Ok(mut mfa_lib) = METAL_FLASH_ATTENTION_LIB.lock() {
+                *mfa_lib = Some(lib.clone());
+            }
+            Ok(lib)
         }
-        return Ok(lib);
+        Err(e) => Err(format!("Failed to load MetalFlashAttention library: {}", e)),
     }
-    Err("Failed to load MetalFlashAttention library".to_string())
 }
 
 pub fn void_ptr<T>(v: &T) -> *const c_void {

@@ -1,5 +1,7 @@
 # Metal Flash Attention Rust API
 
+Work in progress!
+
 Use MFA from Rust.
 Metal Flash Attention is a faster alternative to Metal Performance Shaders, a reference implementation of modern GPU
 algorithms,

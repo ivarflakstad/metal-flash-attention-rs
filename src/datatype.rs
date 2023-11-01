@@ -63,13 +63,16 @@ impl TensorElement for Half {}
 
 pub trait TensorFloatingPoint: TensorElement {
     const FN_NAME: &'static str;
+    const SIZE: u16;
 }
 
 impl TensorFloatingPoint for Float {
     const FN_NAME: &'static str = "sgemm";
+    const SIZE: u16 = 4;
 }
 
 #[cfg(target_arch = "aarch64")]
 impl TensorFloatingPoint for Half {
     const FN_NAME: &'static str = "hgemm";
+    const SIZE: u16 = 2;
 }
