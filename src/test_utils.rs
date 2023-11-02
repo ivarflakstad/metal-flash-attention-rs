@@ -1,9 +1,4 @@
-use crate::datatype::{DataType, Float};
-use crate::tensor::Tensor;
-use metal::Device;
-use rand::thread_rng;
-use std::io;
-use std::io::Write;
+use crate::datatype::DataType;
 use std::ops::{AddAssign, Mul};
 
 // Naive matrix multiplication for testing
@@ -63,15 +58,6 @@ where
         distance,
         tolerance
     );
-}
-
-pub(crate) fn progress_bar(i: usize, len: usize) {
-    print!("\r");
-    print!("[");
-    print!("{}", "=".repeat(i));
-    print!("{}", " ".repeat(len - i - 1));
-    print!("]");
-    io::stdout().flush().unwrap();
 }
 
 #[cfg(test)]

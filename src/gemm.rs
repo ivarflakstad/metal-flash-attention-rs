@@ -1,4 +1,3 @@
-use metal::objc::rc::autoreleasepool;
 use metal::{
     ComputeCommandEncoderRef, DeviceRef, FunctionConstantValues, MTLDataType, MTLResourceUsage,
     MTLSize, NSUInteger,
@@ -177,13 +176,6 @@ pub fn encode<T: TensorFloatingPoint>(
     encoder
         .set_threadgroup_memory_length(0, pipeline.thread_group_memory_lengths()[0] as NSUInteger);
 
-    encoder.use_resource(&a.buffer(), MTLResourceUsage::Read);
-    encoder.use_resource(&b.buffer(), MTLResourceUsage::Read);
-    encoder.use_resource(&c.buffer(), MTLResourceUsage::Write);
-
-    if let Some(d) = d {
-        encoder.use_resource(&d.buffer(), MTLResourceUsage::Read);
-    }
     encoder.set_buffers(
         0,
         &[Some(&a.buffer()), Some(&b.buffer()), Some(&c.buffer())],
@@ -278,67 +270,65 @@ fn create_pipeline<T: TensorFloatingPoint>(
     assert_eq_result!(p.beta, 0.0, "Beta must be 0.0");
     assert_result!(!p.fused_activation, "Fused activation must be false");
 
-    autoreleasepool(|| {
-        let lib = utils::load_mfa_lib(device)?;
+    let lib = utils::load_mfa_lib(device)?;
 
-        let settings = gemm_settings(&p);
-        let m_group = settings.m_group;
-        let n_group = settings.n_group;
-        let k_simd = settings.k_simd.value;
-        let m_splits = settings.m_splits.value;
-        let n_splits = settings.n_splits.value;
+    let config = gemm_config(&p);
+    let m_group = config.m_group;
+    let n_group = config.n_group;
+    let k_simd = config.k_simd.value;
+    let m_splits = config.m_splits.value;
+    let n_splits = config.n_splits.value;
 
-        let a_block_bytes = m_group * k_simd * T::SIZE;
-        let b_block_bytes = k_simd * n_group * T::SIZE;
-        let c_block_bytes = m_group * n_group * T::SIZE;
-        let mut thread_group_memory_length = a_block_bytes + b_block_bytes;
+    let a_block_bytes = m_group * k_simd * T::SIZE;
+    let b_block_bytes = k_simd * n_group * T::SIZE;
+    let c_block_bytes = m_group * n_group * T::SIZE;
+    let mut thread_group_memory_length = a_block_bytes + b_block_bytes;
 
-        if p.m % 8 > 0 && p.n % 8 > 0 {
-            thread_group_memory_length = max(thread_group_memory_length, c_block_bytes);
-        }
-        if p.fused_bias {
-            let d_block_bytes = if p.d_trans {
-                m_group * T::SIZE
-            } else {
-                n_group * T::SIZE
-            };
-            thread_group_memory_length = max(thread_group_memory_length, d_block_bytes);
-        }
+    if p.m % 8 > 0 && p.n % 8 > 0 {
+        thread_group_memory_length = max(thread_group_memory_length, c_block_bytes);
+    }
+    if p.fused_bias {
+        let d_block_bytes = if p.d_trans {
+            m_group * T::SIZE
+        } else {
+            n_group * T::SIZE
+        };
+        thread_group_memory_length = max(thread_group_memory_length, d_block_bytes);
+    }
 
-        let grid_size = MTLSize::new(
-            utils::ceil_divide(p.n, n_group)?,
-            utils::ceil_divide(p.m, m_group)?,
-            1,
-        );
+    let grid_size = MTLSize::new(
+        utils::ceil_divide(p.n, n_group)?,
+        utils::ceil_divide(p.m, m_group)?,
+        1,
+    );
 
-        let group_size = MTLSize::new((32 * m_splits * n_splits) as NSUInteger, 1, 1);
+    let group_size = MTLSize::new((32 * m_splits * n_splits) as NSUInteger, 1, 1);
 
-        let mut flags = 0;
-        if p.batched {
-            flags |= 0x1;
-        }
-        if p.fused_activation {
-            flags |= 0x2;
-        }
-        if p.fused_bias {
-            flags |= 0x4;
-        }
+    let mut flags = 0;
+    if p.batched {
+        flags |= 0x1;
+    }
+    if p.fused_activation {
+        flags |= 0x2;
+    }
+    if p.fused_bias {
+        flags |= 0x4;
+    }
 
-        let constant_values = settings.create_function_constant_values();
-        let function = lib.get_function(T::FN_NAME, Some(constant_values)).unwrap();
+    let constant_values = config.create_function_constant_values();
+    let function = lib.get_function(T::FN_NAME, Some(constant_values)).unwrap();
 
-        let pipeline = Pipeline::new(
-            device,
-            vec![function],
-            flags,
-            vec![0],
-            vec![thread_group_memory_length],
-            vec![grid_size],
-            vec![group_size],
-        );
-        utils::cache_pipeline(p, pipeline.clone())?;
-        Ok(pipeline)
-    })
+    let pipeline = Pipeline::new(
+        device,
+        vec![function],
+        flags,
+        vec![0],
+        vec![thread_group_memory_length],
+        vec![grid_size],
+        vec![group_size],
+    );
+    utils::cache_pipeline(p, pipeline.clone())?;
+    Ok(pipeline)
 }
 
 trait ConstantValueType: Debug {
@@ -369,7 +359,7 @@ impl<T: ConstantValueType> ConstantValue<T> {
     }
 }
 
-trait FunctionConstantValuesCreator {
+trait CreateFunctionConstantValues {
     fn add_constant_value<T: ConstantValueType>(
         constant_values: &mut FunctionConstantValues,
         t: &ConstantValue<T>,
@@ -382,8 +372,9 @@ trait FunctionConstantValuesCreator {
     }
     fn create_function_constant_values(&self) -> FunctionConstantValues;
 }
+
 #[derive(Debug)]
-pub struct GemmSettings {
+pub struct GemmConfig {
     m: ConstantValue<NSUInteger>,
     n: ConstantValue<NSUInteger>,
     k: ConstantValue<NSUInteger>,
@@ -404,7 +395,7 @@ pub struct GemmSettings {
     n_group: u16,
 }
 
-impl FunctionConstantValuesCreator for GemmSettings {
+impl CreateFunctionConstantValues for GemmConfig {
     fn create_function_constant_values(&self) -> FunctionConstantValues {
         let mut constants = FunctionConstantValues::new();
 
@@ -447,7 +438,7 @@ impl FunctionConstantValuesCreator for GemmSettings {
     }
 }
 
-pub fn gemm_settings(p: &GemmParameters) -> GemmSettings {
+pub fn gemm_config(p: &GemmParameters) -> GemmConfig {
     let mut c_elements = p.m * p.n;
     if p.batched {
         c_elements *= 2;
@@ -459,7 +450,7 @@ pub fn gemm_settings(p: &GemmParameters) -> GemmSettings {
     let mut m_group = 32;
     let mut n_group = 32;
     let mut k_simd = 32;
-    if c_elements > 1000 * 1000 {
+    if c_elements > 10 ^ 6 {
         m_group = 48;
         n_group = 48;
     }
@@ -468,14 +459,14 @@ pub fn gemm_settings(p: &GemmParameters) -> GemmSettings {
     if p.k >= 33 && p.k <= 40 {
         k_simd = 40;
     } else if is_half && p.k >= 73 && p.k >= 80 {
-        k_simd = 40;
-    } else if c_elements > 1000 * 1000 {
+        k_simd = 80;
+    } else if c_elements > 10 ^ 6 {
         if p.k <= 16 {
             k_simd = 16;
         } else if p.k <= 24 {
-            k_simd = 24; // 1 * 24
+            k_simd = 24;
         } else if p.k <= 32 {
-            k_simd = 32; // 1 * 32
+            k_simd = 32;
         } else if p.k <= 48 {
             k_simd = 24;
         } else if p.k <= 64 {
@@ -490,7 +481,7 @@ pub fn gemm_settings(p: &GemmParameters) -> GemmSettings {
     let m_simd = m_group / m_splits;
     let n_simd = n_group / n_splits;
 
-    GemmSettings {
+    GemmConfig {
         m: ConstantValue::new(p.m, 0),
         n: ConstantValue::new(p.n, 1),
         k: ConstantValue::new(p.k, 2),
@@ -517,7 +508,7 @@ mod tests {
     use crate::datatype::{Float, TensorFloatingPoint};
     use crate::gemm::encode_gemm;
     use crate::tensor::Tensor;
-    use crate::test_utils::{matrix_mul, progress_bar, vertices_approx_eq};
+    use crate::test_utils::{matrix_mul, vertices_approx_eq};
     use metal::Device;
 
     #[test]
@@ -539,8 +530,8 @@ mod tests {
         let tolerance = (avg_magnitude * mag_multiplier).max(avg_magnitude * 3e-7);
 
         for i in 0..ITERATIONS {
-            let a = Tensor::<T>::random(&device, vec![M, K], 5.0..7.0);
-            let b = Tensor::<T>::random(&device, vec![K, N], 5.0..7.0);
+            let a = Tensor::<T>::random(&device, vec![M, K], 0.0..1.0);
+            let b = Tensor::<T>::random(&device, vec![K, N], 0.0..1.0);
             let mut c = Tensor::<T>::new(&device, vec![K, N]);
 
             let command_buffer = command_queue.new_command_buffer();

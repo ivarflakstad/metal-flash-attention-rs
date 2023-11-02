@@ -4,6 +4,8 @@ use std::sync::Mutex;
 
 use metal::{DeviceRef, Library, NSUInteger};
 use once_cell::sync::Lazy;
+use std::io;
+use std::io::Write;
 
 use crate::pipeline::{Parameters, Pipeline};
 use crate::Result;
@@ -80,4 +82,13 @@ macro_rules! assert_eq_result {
     ($a:expr, $b:expr, $($arg:tt)*) => {
         $crate::assert_result!($a == $b, $($arg)*)
     };
+}
+
+pub fn progress_bar(i: usize, len: usize) {
+    print!("\r");
+    print!("[");
+    print!("{}", "=".repeat(i));
+    print!("{}", " ".repeat(len - i - 1));
+    print!("]");
+    io::stdout().flush().unwrap();
 }

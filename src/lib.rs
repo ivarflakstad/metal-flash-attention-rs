@@ -4,7 +4,7 @@ pub mod gemm;
 pub mod pipeline;
 pub mod shape;
 pub mod tensor;
-mod utils;
+pub mod utils;
 
 #[cfg(test)]
 mod test_utils;
