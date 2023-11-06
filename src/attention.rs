@@ -125,7 +125,7 @@ pub fn encode_attention<T: TensorFloatingPoint>(
         block_sparse,
     };
 
-    let pipeline = create_pipeline::<T>(device, parameters).expect("Failed to create pipeline");
+    let pipeline = create_pipeline(device, parameters)?;
     encode(encoder, &pipeline, q, k, v, o, mask)?;
 
     Ok(())
@@ -191,7 +191,7 @@ pub fn encode<T: TensorFloatingPoint>(
 
     if pipeline.flags() & 0x2 > 0 {
         let mask_tensor =
-            mask.expect("Mask tensor must be provided if masked attention is enabled");
+            mask.ok_or("Mask tensor must be provided if masked attention is enabled")?;
         let mask_shape = mask_tensor.shape();
         assert_eq_result!(
             mask_shape[mask_tensor.shape().len() - 3],
@@ -254,15 +254,12 @@ pub struct AttentionParameters {
     block_sparse: bool,
 }
 
-fn create_pipeline<T: TensorFloatingPoint>(
-    device: &DeviceRef,
-    p: AttentionParameters,
-) -> Result<Pipeline> {
+fn create_pipeline(device: &DeviceRef, p: AttentionParameters) -> Result<Pipeline> {
     if let Some(pipeline) = utils::get_cached_pipeline(p) {
         return Ok(pipeline);
     }
 
-    let lib = utils::load_mfa_lib(device).unwrap();
+    let lib = utils::load_mfa_lib(device)?;
 
     let constants = FunctionConstantValues::new();
 
@@ -533,7 +530,7 @@ fn create_pipeline<T: TensorFloatingPoint>(
         block_bytes,
         grid_sizes,
         group_sizes,
-    );
+    )?;
     utils::cache_pipeline(p, pipeline.clone())?;
     Ok(pipeline)
 }

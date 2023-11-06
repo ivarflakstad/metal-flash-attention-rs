@@ -16,7 +16,6 @@ use crate::datatype::TensorElement;
 // impl<T: TensorFloatingPoint> TensorBuffer<T> {
 //      fn from_rand(device: &DeviceRef, shape: Vec<u64>, mask: AttentionMask) -> Self {
 // }
-
 #[derive(Debug, Clone)]
 pub struct Tensor<T: TensorElement> {
     buffer: Buffer,

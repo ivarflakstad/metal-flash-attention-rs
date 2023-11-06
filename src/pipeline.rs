@@ -4,6 +4,7 @@ use metal::{ComputePipelineState, DeviceRef, Function, MTLSize, NSUInteger};
 
 use crate::attention::AttentionParameters;
 use crate::gemm::GemmParameters;
+use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Parameters {
@@ -42,20 +43,20 @@ impl Pipeline {
         thread_group_memory_lengths: Vec<u16>,
         grid_sizes: Vec<MTLSize>,
         group_sizes: Vec<MTLSize>,
-    ) -> Pipeline {
+    ) -> Result<Pipeline> {
         let mut pipelines = Vec::with_capacity(functions.len());
         for f in functions.iter() {
-            let pipeline = device.new_compute_pipeline_state_with_function(f).unwrap();
+            let pipeline = device.new_compute_pipeline_state_with_function(f)?;
             pipelines.push(pipeline);
         }
-        Pipeline {
+        Ok(Pipeline {
             pipelines,
             flags,
             device_memory_lengths,
             thread_group_memory_lengths,
             grid_sizes,
             group_sizes,
-        }
+        })
     }
 
     pub fn pipeline(&self, index: usize) -> &ComputePipelineState {

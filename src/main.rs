@@ -4,12 +4,8 @@ use metal::Device;
 
 use metal_flash_attention::attention::encode_attention;
 use metal_flash_attention::datatype::Float;
-use metal_flash_attention::gemm::encode_gemm;
+use metal_flash_attention::gemm::{encode_gemm, GemmTensors};
 use metal_flash_attention::tensor::Tensor;
-
-const M: usize = 4;
-const N: usize = 4;
-const K: usize = 4;
 
 fn main() {
     gemm_performance();
@@ -23,7 +19,7 @@ fn gemm_performance() {
 
     type T = Float;
 
-    const ITERATIONS: usize = 5000;
+    const ITERATIONS: usize = 2000;
 
     println!("Performance: ");
     println!("{M}x{K}xf32 * {K}x{N}xf32 = {M}x{N}xf32");
@@ -49,10 +45,8 @@ fn gemm_performance() {
 
         let start = Instant::now();
         for _ in 0..ITERATIONS {
-            encode_gemm(
-                &device, encoder, &a, &b, &mut c, &d, t_a, t_b, false, 1.0, 0.0, false,
-            )
-            .expect("Encoding failed");
+            let tensors = GemmTensors::new(&a, &b, &mut c, d);
+            encode_gemm(&device, encoder, tensors, t_a, t_b, false).expect("Encoding failed");
         }
 
         encoder.end_encoding();
@@ -73,7 +67,7 @@ fn gemm_performance() {
     }
 }
 
-fn attention() {
+fn _attention() {
     let device = Device::system_default().expect("No device found");
 
     const B: usize = 1;
@@ -88,11 +82,11 @@ fn attention() {
     let expected_o = Tensor::new(&device, vec![B, R, H, D]);
     let expected_mask = Tensor::<Float>::random(&device, vec![1, 1, R, C], 0.0..1.0);
 
-    let actual_q = Tensor::copy(&expected_q);
-    let actual_k = Tensor::copy(&expected_k);
-    let actual_v = Tensor::copy(&expected_v);
+    let _actual_q = Tensor::copy(&expected_q);
+    let _actual_k = Tensor::copy(&expected_k);
+    let _actual_v = Tensor::copy(&expected_v);
     let actual_o = Tensor::copy(&expected_o);
-    let actual_mask = Tensor::copy(&expected_mask);
+    let _actual_mask = Tensor::copy(&expected_mask);
 
     let command_queue = device.new_command_queue();
     let command_buffer = command_queue.new_command_buffer();
@@ -111,7 +105,7 @@ fn attention() {
         false,
         false,
     )
-    .unwrap();
+    .expect("Encoding failed");
     encoder.end_encoding();
     command_buffer.commit();
     let start = Instant::now();

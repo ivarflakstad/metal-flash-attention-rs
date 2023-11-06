@@ -2,33 +2,47 @@ use metal::{
     ComputeCommandEncoderRef, DeviceRef, FunctionConstantValues, MTLDataType, MTLResourceUsage,
     MTLSize, NSUInteger,
 };
-use num_traits::Float;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
-use crate::datatype::TensorFloatingPoint;
+use crate::datatype::{TensorElement, TensorFloatingPoint};
 use crate::pipeline::Pipeline;
 use crate::tensor::Tensor;
 use crate::utils;
 use crate::{assert_eq_result, assert_result, Result};
 
+#[derive(Debug)]
+pub struct GemmTensors<'a, T: TensorElement> {
+    pub(crate) a: &'a Tensor<T>,
+    pub(crate) b: &'a Tensor<T>,
+    pub(crate) c: &'a mut Tensor<T>,
+    pub(crate) d: Option<&'a Tensor<T>>,
+}
+
+impl<'a, T: TensorElement> GemmTensors<'a, T> {
+    pub fn new(
+        a: &'a Tensor<T>,
+        b: &'a Tensor<T>,
+        c: &'a mut Tensor<T>,
+        d: Option<&'a Tensor<T>>,
+    ) -> Self {
+        GemmTensors { a, b, c, d }
+    }
+}
+
 pub fn encode_gemm<T: TensorFloatingPoint>(
     device: &DeviceRef,
     encoder: &ComputeCommandEncoderRef,
-    a: &Tensor<T>,
-    b: &Tensor<T>,
-    c: &mut Tensor<T>,
-    d: &Option<Tensor<T>>,
+    tensors: GemmTensors<T>,
     transpose_a: bool,
     transpose_b: bool,
     transpose_d: bool,
-    alpha: f32,
-    beta: f32,
-    fused_bias: bool,
 ) -> Result<()> {
-    assert_eq_result!(alpha, 1.0, "Alpha must be 1.0");
-    assert_eq_result!(beta, 0.0, "Beta must be 0.0");
+    let a = tensors.a;
+    let b = tensors.b;
+    let c = tensors.c;
+    let d = tensors.d;
 
     let a_shape = a.shape();
     let b_shape = b.shape();
@@ -86,9 +100,9 @@ pub fn encode_gemm<T: TensorFloatingPoint>(
         batched = true;
     }
 
-    if !fused_bias {
-        assert_result!(d.is_none(), "Bias tensor provided without fused_bias flag");
-    } else {
+    let fused_bias = d.is_some();
+
+    if fused_bias {
         let d_t = d
             .as_ref()
             .ok_or("Fused bias provided without bias tensor")?;
@@ -116,15 +130,13 @@ pub fn encode_gemm<T: TensorFloatingPoint>(
         a_trans: transpose_a,
         b_trans: transpose_b,
         d_trans: transpose_d,
-        alpha,
-        beta,
         batched,
         fused_activation: false,
         fused_bias,
         fn_name: T::FN_NAME,
     };
 
-    let pipeline = create_pipeline::<T>(device, parameters).expect("Failed to create pipeline");
+    let pipeline = create_pipeline::<T>(device, parameters)?;
     encode(encoder, a, b, c, d, pipeline);
 
     Ok(())
@@ -138,8 +150,6 @@ pub struct GemmParameters {
     a_trans: bool,
     b_trans: bool,
     d_trans: bool,
-    alpha: f32,
-    beta: f32,
     batched: bool,
     fused_activation: bool,
     fused_bias: bool,
@@ -153,8 +163,6 @@ impl Hash for GemmParameters {
         self.k.hash(state);
         self.a_trans.hash(state);
         self.b_trans.hash(state);
-        Float::integer_decode(self.alpha).hash(state);
-        Float::integer_decode(self.beta).hash(state);
         self.batched.hash(state);
         self.fused_activation.hash(state);
         self.fused_bias.hash(state);
@@ -169,16 +177,23 @@ pub fn encode<T: TensorFloatingPoint>(
     a: &Tensor<T>,
     b: &Tensor<T>,
     c: &Tensor<T>,
-    d: &Option<Tensor<T>>,
+    d: Option<&Tensor<T>>,
     pipeline: Pipeline,
 ) {
-    encoder.set_compute_pipeline_state(&pipeline.pipeline(0));
+    encoder.set_compute_pipeline_state(pipeline.pipeline(0));
     encoder
         .set_threadgroup_memory_length(0, pipeline.thread_group_memory_lengths()[0] as NSUInteger);
 
+    encoder.use_resources(&[a.buffer(), b.buffer()], MTLResourceUsage::Read);
+    encoder.use_resource(c.buffer(), MTLResourceUsage::Write);
+
+    if let Some(d) = d {
+        encoder.use_resource(d.buffer(), MTLResourceUsage::Read);
+    }
+
     encoder.set_buffers(
         0,
-        &[Some(&a.buffer()), Some(&b.buffer()), Some(&c.buffer())],
+        &[Some(a.buffer()), Some(b.buffer()), Some(c.buffer())],
         &[0; 3],
     );
     if let Some(d) = d {
@@ -266,8 +281,6 @@ fn create_pipeline<T: TensorFloatingPoint>(
         return Ok(pipeline);
     }
 
-    assert_eq_result!(p.alpha, 1.0, "Alpha must be 1.0");
-    assert_eq_result!(p.beta, 0.0, "Beta must be 0.0");
     assert_result!(!p.fused_activation, "Fused activation must be false");
 
     let lib = utils::load_mfa_lib(device)?;
@@ -316,7 +329,7 @@ fn create_pipeline<T: TensorFloatingPoint>(
     }
 
     let constant_values = config.create_function_constant_values();
-    let function = lib.get_function(T::FN_NAME, Some(constant_values)).unwrap();
+    let function = lib.get_function(T::FN_NAME, Some(constant_values))?;
 
     let pipeline = Pipeline::new(
         device,
@@ -326,7 +339,7 @@ fn create_pipeline<T: TensorFloatingPoint>(
         vec![thread_group_memory_length],
         vec![grid_size],
         vec![group_size],
-    );
+    )?;
     utils::cache_pipeline(p, pipeline.clone())?;
     Ok(pipeline)
 }
@@ -488,8 +501,8 @@ pub fn gemm_config(p: &GemmParameters) -> GemmConfig {
         a_trans: ConstantValue::new(p.a_trans, 10),
         b_trans: ConstantValue::new(p.b_trans, 11),
         d_trans: ConstantValue::new(p.d_trans, 13),
-        alpha: ConstantValue::new(p.alpha, 20),
-        beta: ConstantValue::new(p.beta, 21),
+        alpha: ConstantValue::new(1.0, 20),
+        beta: ConstantValue::new(0.0, 21),
         batched: ConstantValue::new(p.batched, 100),
         fused_activation: ConstantValue::new(p.fused_activation, 101),
         fused_bias: ConstantValue::new(p.fused_bias, 50001),
@@ -506,7 +519,7 @@ pub fn gemm_config(p: &GemmParameters) -> GemmConfig {
 #[cfg(test)]
 mod tests {
     use crate::datatype::{Float, TensorFloatingPoint};
-    use crate::gemm::encode_gemm;
+    use crate::gemm::{encode_gemm, GemmTensors};
     use crate::tensor::Tensor;
     use crate::test_utils::{matrix_mul, vertices_approx_eq};
     use metal::Device;
@@ -519,7 +532,7 @@ mod tests {
 
         type T = Float;
 
-        const ITERATIONS: usize = 20;
+        const ITERATIONS: usize = 50;
 
         let device = Device::system_default().expect("No device found");
         let command_queue = device.new_command_queue();
@@ -534,12 +547,11 @@ mod tests {
             let b = Tensor::<T>::random(&device, vec![K, N], 0.0..1.0);
             let mut c = Tensor::<T>::new(&device, vec![K, N]);
 
+            let tensors = GemmTensors::new(&a, &b, &mut c, None);
+
             let command_buffer = command_queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
-            encode_gemm(
-                &device, &encoder, &a, &b, &mut c, &None, false, false, false, 1.0, 0.0, false,
-            )
-            .expect("Encoding failed");
+            encode_gemm(&device, &encoder, tensors, false, false, false).expect("Encoding failed");
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
