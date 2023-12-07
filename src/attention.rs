@@ -1,12 +1,13 @@
 use std::arch::aarch64::vrsqrtes_f32;
 use std::cmp::max;
 use std::hash::Hash;
+use half::f16;
 
 use metal::{
     ComputeCommandEncoderRef, DeviceRef, FunctionConstantValues, MTLDataType, MTLSize, NSUInteger,
 };
 
-use crate::datatype::{DataType, Half, TensorFloatingPoint};
+use crate::datatype::{DataType, TensorFloatingPoint};
 use crate::pipeline::Pipeline;
 use crate::tensor::Tensor;
 use crate::utils::{ceil_divide, void_ptr};
@@ -302,7 +303,7 @@ fn create_pipeline(device: &DeviceRef, p: AttentionParameters) -> Result<Pipelin
     let mut r_splits: u16 = 4;
     let mut fuse_async_loads = false;
 
-    if p.data_type == Half::TYPE_ID {
+    if p.data_type == f16::TYPE_ID {
         let d = p.d;
         if p.masked {
             if d <= 16 {

@@ -3,14 +3,14 @@ use std::ops::{AddAssign, Mul};
 
 // Naive matrix multiplication for testing
 pub(crate) fn matrix_mul<T: DataType>(
-    a: Vec<T::Type>,
-    b: Vec<T::Type>,
+    a: Vec<T>,
+    b: Vec<T>,
     m: usize,
     n: usize,
     k: usize,
-) -> Vec<T::Type>
+) -> Vec<T>
 where
-    T::Type: AddAssign + Mul<Output = T::Type> + Copy,
+    T: AddAssign + Mul<Output = T> + Copy,
 {
     let size = m * n;
 
@@ -62,7 +62,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::datatype::Float;
     use crate::test_utils::matrix_mul;
 
     #[test]
@@ -72,7 +71,7 @@ mod tests {
         let k = 2;
         let a = vec![1., 2., 6., 24., 120., 720.];
         let b = vec![1., 2., 6., 24., 120., 720.];
-        let result = matrix_mul::<Float>(a, b, m, n, k);
+        let result = matrix_mul::<f32>(a, b, m, n, k);
         assert_eq!(
             result,
             &[49., 242., 1446., 582., 2892., 17316., 17400., 86640., 519120.]
