@@ -518,7 +518,7 @@ pub fn gemm_config(p: &GemmParameters) -> GemmConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::datatype::{Float, TensorFloatingPoint};
+    use crate::datatype::TensorFloatingPoint;
     use crate::gemm::{encode_gemm, GemmTensors};
     use crate::tensor::Tensor;
     use crate::test_utils::{matrix_mul, vertices_approx_eq};
@@ -530,7 +530,7 @@ mod tests {
         const N: usize = 100;
         const K: usize = 100;
 
-        type T = Float;
+        type T = f32;
 
         const ITERATIONS: usize = 50;
 

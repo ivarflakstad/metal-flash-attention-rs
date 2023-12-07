@@ -28,7 +28,7 @@ pub struct Tensor<T: TensorElement> {
 impl<T: TensorElement> Tensor<T> {
     pub fn new(device: &DeviceRef, shape: Vec<usize>) -> Self {
         let count: usize = shape.iter().product();
-        let allocated_size = count * mem::size_of::<T::Type>();
+        let allocated_size = count * mem::size_of::<T>();
         let buffer =
             device.new_buffer(allocated_size as u64, MTLResourceOptions::StorageModeShared);
         Tensor {
@@ -42,7 +42,7 @@ impl<T: TensorElement> Tensor<T> {
 
     pub fn zeros(device: &DeviceRef, shape: Vec<usize>) -> Self {
         let count = shape.iter().product();
-        let allocated_size = count * mem::size_of::<T::Type>();
+        let allocated_size = count * mem::size_of::<T>();
         let buffer = device.new_buffer_with_data(
             vec![T::from_f64(0.0); count].as_ptr().cast(),
             allocated_size as u64,
@@ -59,10 +59,10 @@ impl<T: TensorElement> Tensor<T> {
 
     pub fn random(device: &DeviceRef, shape: Vec<usize>, range: Range<f64>) -> Self {
         let count = shape.iter().product();
-        let allocated_size = count * mem::size_of::<T::Type>();
+        let allocated_size = count * mem::size_of::<T>();
 
         let mut rng = rand::thread_rng();
-        let entries: Vec<T::Type> = (0..count)
+        let entries: Vec<T> = (0..count)
             .map(|_| T::from_f64(rng.gen_range(range.clone())))
             .collect();
 
@@ -82,9 +82,9 @@ impl<T: TensorElement> Tensor<T> {
 
     pub fn linear(device: &DeviceRef, shape: Vec<usize>, range: Range<f64>) -> Self {
         let count = shape.iter().product();
-        let allocated_size = count * mem::size_of::<T::Type>();
+        let allocated_size = count * mem::size_of::<T>();
 
-        let entries: Vec<T::Type> = (0..count)
+        let entries: Vec<T> = (0..count)
             .map(|i| T::from_f64(i as f64 / count as f64 * (range.end - range.start)))
             .collect();
 
@@ -123,9 +123,9 @@ impl<T: TensorElement> Tensor<T> {
     }
 
     #[inline]
-    pub fn contents(&self) -> Vec<T::Type> {
+    pub fn contents(&self) -> Vec<T> {
         let contents =
-            unsafe { slice::from_raw_parts(self.buffer.contents() as *const T::Type, self.count) };
+            unsafe { slice::from_raw_parts(self.buffer.contents() as *const T, self.count) };
         contents.to_vec()
     }
 }

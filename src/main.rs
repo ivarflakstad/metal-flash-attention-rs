@@ -3,7 +3,6 @@ use std::time::Instant;
 use metal::Device;
 
 use metal_flash_attention::attention::encode_attention;
-use metal_flash_attention::datatype::Float;
 use metal_flash_attention::gemm::{encode_gemm, GemmTensors};
 use metal_flash_attention::tensor::Tensor;
 
@@ -17,7 +16,7 @@ fn gemm_performance() {
     const N: usize = 1536;
     const K: usize = 1536;
 
-    type T = Float;
+    type T = f32;
 
     const ITERATIONS: usize = 2000;
 
@@ -76,11 +75,11 @@ fn _attention() {
     const H: usize = 1;
     const D: usize = 8;
 
-    let expected_q = Tensor::<Float>::random(&device, vec![B, R, H, D], 0.0..1.0);
+    let expected_q = Tensor::<f32>::random(&device, vec![B, R, H, D], 0.0..1.0);
     let expected_k = Tensor::random(&device, vec![B, C, H, D], 0.0..1.0);
     let expected_v = Tensor::random(&device, vec![B, C, H, D], 0.0..1.0);
     let expected_o = Tensor::new(&device, vec![B, R, H, D]);
-    let expected_mask = Tensor::<Float>::random(&device, vec![1, 1, R, C], 0.0..1.0);
+    let expected_mask = Tensor::<f32>::random(&device, vec![1, 1, R, C], 0.0..1.0);
 
     let _actual_q = Tensor::copy(&expected_q);
     let _actual_k = Tensor::copy(&expected_k);
